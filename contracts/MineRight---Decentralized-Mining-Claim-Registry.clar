@@ -6,9 +6,14 @@
 (define-constant ERR-INVALID-COMPLIANCE-SCORE (err u6))
 (define-constant ERR-CLAIM-INACTIVE (err u7))
 (define-constant ERR-INVALID-ROYALTY-RATE (err u8))
+(define-constant ERR-DISPUTE-NOT-FOUND (err u9))
+(define-constant ERR-DISPUTE-ALREADY-RESOLVED (err u10))
+(define-constant ERR-INVALID-DISPUTE-TYPE (err u11))
+(define-constant ERR-VOTING-PERIOD-ENDED (err u12))
 
 (define-data-var claim-counter uint u0)
 (define-data-var required-approvals uint u2)
+(define-data-var dispute-counter uint u0)
 
 (define-map mining-claims
   { claim-id: uint }
@@ -46,6 +51,30 @@
   { latitude: int, longitude: int }
   { claim-id: uint })
 
+(define-map disputes
+  { dispute-id: uint }
+  {
+    claim-id: uint,
+    plaintiff: principal,
+    defendant: principal,
+    dispute-type: (string-ascii 20),
+    description: (string-ascii 200),
+    evidence-hash: (string-ascii 64),
+    filed-at: uint,
+    voting-ends: uint,
+    status: (string-ascii 20),
+    resolution: (string-ascii 20),
+    penalty-amount: uint
+  })
+
+(define-map dispute-votes
+  { dispute-id: uint, voter: principal }
+  { vote: (string-ascii 20), timestamp: uint })
+
+(define-map dispute-vote-counts
+  { dispute-id: uint }
+  { favor-plaintiff: uint, favor-defendant: uint, abstain: uint })
+
 (define-read-only (get-claim (claim-id uint))
   (map-get? mining-claims { claim-id: claim-id }))
 
@@ -77,6 +106,21 @@
         (if (get community-approved approvals) u1 u0)
         (if (get environmental-approved approvals) u1 u0))
     u0))
+
+(define-read-only (get-dispute (dispute-id uint))
+  (map-get? disputes { dispute-id: dispute-id }))
+
+(define-read-only (get-dispute-vote-counts (dispute-id uint))
+  (default-to 
+    { favor-plaintiff: u0, favor-defendant: u0, abstain: u0 }
+    (map-get? dispute-vote-counts { dispute-id: dispute-id })))
+
+(define-read-only (is-voting-active (dispute-id uint))
+  (match (get-dispute dispute-id)
+    dispute (and 
+      (is-eq (get status dispute) "voting")
+      (< stacks-block-height (get voting-ends dispute)))
+    false))
 
 (define-public (register-claim 
   (gps-latitude int) 
@@ -168,7 +212,7 @@
 (define-public (deposit-royalty (claim-id uint) (amount uint))
   (let ((claim (unwrap! (get-claim claim-id) ERR-NOT-FOUND)))
     (asserts! (is-claim-active claim-id) ERR-CLAIM-INACTIVE)
-    (asserts! (> amount u0) (err u9))
+    (asserts! (> amount u0) (err u13))
     (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
     (map-set royalty-balances
       { claim-id: claim-id, recipient: (get owner claim) }
@@ -179,7 +223,7 @@
   (let ((claim (unwrap! (get-claim claim-id) ERR-NOT-FOUND))
         (current-balance (get-royalty-balance claim-id tx-sender)))
     (asserts! (is-eq tx-sender (get owner claim)) ERR-UNAUTHORIZED)
-    (asserts! (>= current-balance amount) (err u10))
+    (asserts! (>= current-balance amount) (err u14))
     (map-set royalty-balances
       { claim-id: claim-id, recipient: tx-sender }
       { balance: (- current-balance amount) })
@@ -218,4 +262,98 @@
   (begin
     (asserts! (is-eq tx-sender (as-contract tx-sender)) ERR-UNAUTHORIZED)
     (var-set required-approvals new-required)
+    (ok true)))
+
+(define-public (file-dispute 
+  (claim-id uint) 
+  (defendant principal) 
+  (dispute-type (string-ascii 20)) 
+  (description (string-ascii 200)) 
+  (evidence-hash (string-ascii 64)))
+  (let ((dispute-id (+ (var-get dispute-counter) u1))
+        (claim (unwrap! (get-claim claim-id) ERR-NOT-FOUND)))
+    (asserts! (is-claim-active claim-id) ERR-CLAIM-INACTIVE)
+    (asserts! (or 
+      (is-eq dispute-type "boundary")
+      (is-eq dispute-type "environmental")
+      (is-eq dispute-type "royalty")
+      (is-eq dispute-type "ownership")) ERR-INVALID-DISPUTE-TYPE)
+    (map-set disputes
+      { dispute-id: dispute-id }
+      {
+        claim-id: claim-id,
+        plaintiff: tx-sender,
+        defendant: defendant,
+        dispute-type: dispute-type,
+        description: description,
+        evidence-hash: evidence-hash,
+        filed-at: stacks-block-height,
+        voting-ends: (+ stacks-block-height u1440),
+        status: "voting",
+        resolution: "pending",
+        penalty-amount: u0
+      })
+    (map-set dispute-vote-counts
+      { dispute-id: dispute-id }
+      { favor-plaintiff: u0, favor-defendant: u0, abstain: u0 })
+    (var-set dispute-counter dispute-id)
+    (ok dispute-id)))
+
+(define-public (vote-on-dispute (dispute-id uint) (vote (string-ascii 20)))
+  (let ((dispute (unwrap! (get-dispute dispute-id) ERR-DISPUTE-NOT-FOUND))
+        (current-counts (get-dispute-vote-counts dispute-id)))
+    (asserts! (is-voting-active dispute-id) ERR-VOTING-PERIOD-ENDED)
+    (asserts! (or 
+      (is-eq vote "plaintiff")
+      (is-eq vote "defendant")
+      (is-eq vote "abstain")) ERR-INVALID-DISPUTE-TYPE)
+    (map-set dispute-votes
+      { dispute-id: dispute-id, voter: tx-sender }
+      { vote: vote, timestamp: stacks-block-height })
+    (map-set dispute-vote-counts
+      { dispute-id: dispute-id }
+      (if (is-eq vote "plaintiff")
+        (merge current-counts { favor-plaintiff: (+ (get favor-plaintiff current-counts) u1) })
+        (if (is-eq vote "defendant")
+          (merge current-counts { favor-defendant: (+ (get favor-defendant current-counts) u1) })
+          (merge current-counts { abstain: (+ (get abstain current-counts) u1) }))))
+    (ok true)))
+
+(define-public (resolve-dispute (dispute-id uint))
+  (let ((dispute (unwrap! (get-dispute dispute-id) ERR-DISPUTE-NOT-FOUND))
+        (vote-counts (get-dispute-vote-counts dispute-id))
+        (plaintiff-votes (get favor-plaintiff vote-counts))
+        (defendant-votes (get favor-defendant vote-counts)))
+    (asserts! (not (is-voting-active dispute-id)) ERR-VOTING-PERIOD-ENDED)
+    (asserts! (is-eq (get status dispute) "voting") ERR-DISPUTE-ALREADY-RESOLVED)
+    (let ((resolution (if (> plaintiff-votes defendant-votes) "plaintiff-wins" "defendant-wins"))
+          (penalty (if (> plaintiff-votes defendant-votes) u10000000 u0)))
+      (map-set disputes
+        { dispute-id: dispute-id }
+        (merge dispute { 
+          status: "resolved", 
+          resolution: resolution,
+          penalty-amount: penalty
+        }))
+      (if (> plaintiff-votes defendant-votes)
+        (begin
+          (try! (stx-transfer? penalty (get defendant dispute) (get plaintiff dispute)))
+          (ok { resolution: resolution, penalty: penalty }))
+        (ok { resolution: resolution, penalty: u0 })))))
+
+(define-public (appeal-dispute (dispute-id uint))
+  (let ((dispute (unwrap! (get-dispute dispute-id) ERR-DISPUTE-NOT-FOUND)))
+    (asserts! (is-eq (get status dispute) "resolved") ERR-DISPUTE-NOT-FOUND)
+    (asserts! (or 
+      (is-eq tx-sender (get plaintiff dispute))
+      (is-eq tx-sender (get defendant dispute))) ERR-UNAUTHORIZED)
+    (map-set disputes
+      { dispute-id: dispute-id }
+      (merge dispute { 
+        status: "appeal",
+        voting-ends: (+ stacks-block-height u2880)
+      }))
+    (map-set dispute-vote-counts
+      { dispute-id: dispute-id }
+      { favor-plaintiff: u0, favor-defendant: u0, abstain: u0 })
     (ok true)))
