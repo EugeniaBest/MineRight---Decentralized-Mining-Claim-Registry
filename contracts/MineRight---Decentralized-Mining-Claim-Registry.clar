@@ -14,6 +14,7 @@
 (define-data-var claim-counter uint u0)
 (define-data-var required-approvals uint u2)
 (define-data-var dispute-counter uint u0)
+(define-data-var sub-claim-counter uint u0)
 
 (define-map mining-claims
   { claim-id: uint }
@@ -75,6 +76,26 @@
   { dispute-id: uint }
   { favor-plaintiff: uint, favor-defendant: uint, abstain: uint })
 
+(define-map sub-claims
+  { sub-claim-id: uint }
+  {
+    parent-claim-id: uint,
+    owner: principal,
+    gps-latitude: int,
+    gps-longitude: int,
+    area-hectares: uint,
+    mineral-type: (string-ascii 50),
+    status: (string-ascii 20),
+    issue-date: uint,
+    expiry-date: uint,
+    royalty-rate: uint,
+    compliance-score: uint
+  })
+
+(define-map sub-claim-coordinates
+  { latitude: int, longitude: int }
+  { sub-claim-id: uint })
+
 (define-read-only (get-claim (claim-id uint))
   (map-get? mining-claims { claim-id: claim-id }))
 
@@ -90,7 +111,9 @@
     u0))
 
 (define-read-only (check-coordinate-overlap (latitude int) (longitude int))
-  (is-some (map-get? claim-coordinates { latitude: latitude, longitude: longitude })))
+  (or
+    (is-some (map-get? claim-coordinates { latitude: latitude, longitude: longitude }))
+    (is-some (map-get? sub-claim-coordinates { latitude: latitude, longitude: longitude }))))
 
 (define-read-only (is-claim-active (claim-id uint))
   (match (get-claim claim-id)
@@ -117,9 +140,17 @@
 
 (define-read-only (is-voting-active (dispute-id uint))
   (match (get-dispute dispute-id)
-    dispute (and 
+    dispute (and
       (is-eq (get status dispute) "voting")
       (< stacks-block-height (get voting-ends dispute)))
+    false))
+
+(define-read-only (get-sub-claim (sub-claim-id uint))
+  (map-get? sub-claims { sub-claim-id: sub-claim-id }))
+
+(define-read-only (is-sub-claim-active (sub-claim-id uint))
+  (match (get-sub-claim sub-claim-id)
+    sub-claim (is-eq (get status sub-claim) "active")
     false))
 
 (define-public (register-claim 
@@ -344,12 +375,12 @@
 (define-public (appeal-dispute (dispute-id uint))
   (let ((dispute (unwrap! (get-dispute dispute-id) ERR-DISPUTE-NOT-FOUND)))
     (asserts! (is-eq (get status dispute) "resolved") ERR-DISPUTE-NOT-FOUND)
-    (asserts! (or 
+    (asserts! (or
       (is-eq tx-sender (get plaintiff dispute))
       (is-eq tx-sender (get defendant dispute))) ERR-UNAUTHORIZED)
     (map-set disputes
       { dispute-id: dispute-id }
-      (merge dispute { 
+      (merge dispute {
         status: "appeal",
         voting-ends: (+ stacks-block-height u2880)
       }))
@@ -357,3 +388,39 @@
       { dispute-id: dispute-id }
       { favor-plaintiff: u0, favor-defendant: u0, abstain: u0 })
     (ok true)))
+
+(define-public (subdivide-claim
+  (parent-claim-id uint)
+  (gps-latitude int)
+  (gps-longitude int)
+  (area-hectares uint)
+  (mineral-type (string-ascii 50))
+  (royalty-rate uint))
+  (let ((parent-claim (unwrap! (get-claim parent-claim-id) ERR-NOT-FOUND))
+        (sub-claim-id (+ (var-get sub-claim-counter) u1)))
+    (asserts! (is-eq tx-sender (get owner parent-claim)) ERR-UNAUTHORIZED)
+    (asserts! (is-claim-active parent-claim-id) ERR-CLAIM-INACTIVE)
+    (asserts! (and (>= gps-latitude -90000000) (<= gps-latitude 90000000)) ERR-INVALID-COORDINATES)
+    (asserts! (and (>= gps-longitude -180000000) (<= gps-longitude 180000000)) ERR-INVALID-COORDINATES)
+    (asserts! (not (check-coordinate-overlap gps-latitude gps-longitude)) ERR-ALREADY-EXISTS)
+    (asserts! (<= royalty-rate u1000) ERR-INVALID-ROYALTY-RATE)
+    (map-set sub-claims
+      { sub-claim-id: sub-claim-id }
+      {
+        parent-claim-id: parent-claim-id,
+        owner: tx-sender,
+        gps-latitude: gps-latitude,
+        gps-longitude: gps-longitude,
+        area-hectares: area-hectares,
+        mineral-type: mineral-type,
+        status: "active",
+        issue-date: stacks-block-height,
+        expiry-date: (+ stacks-block-height u52560),
+        royalty-rate: royalty-rate,
+        compliance-score: u0
+      })
+    (map-set sub-claim-coordinates
+      { latitude: gps-latitude, longitude: gps-longitude }
+      { sub-claim-id: sub-claim-id })
+    (var-set sub-claim-counter sub-claim-id)
+    (ok sub-claim-id)))
