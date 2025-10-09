@@ -10,6 +10,9 @@
 (define-constant ERR-DISPUTE-ALREADY-RESOLVED (err u10))
 (define-constant ERR-INVALID-DISPUTE-TYPE (err u11))
 (define-constant ERR-VOTING-PERIOD-ENDED (err u12))
+(define-constant ERR-INVALID-DURATION (err u15))
+(define-constant ERR-INVALID-RENT (err u16))
+(define-constant ERR-NO-RENT-DUE (err u17))
 
 (define-data-var claim-counter uint u0)
 (define-data-var required-approvals uint u2)
@@ -96,6 +99,16 @@
   { latitude: int, longitude: int }
   { sub-claim-id: uint })
 
+(define-map claim-leases
+  { claim-id: uint }
+  {
+    lessee: principal,
+    start-block: uint,
+    end-block: uint,
+    rent-per-block: uint,
+    last-payment-block: uint
+  })
+
 (define-read-only (get-claim (claim-id uint))
   (map-get? mining-claims { claim-id: claim-id }))
 
@@ -152,6 +165,9 @@
   (match (get-sub-claim sub-claim-id)
     sub-claim (is-eq (get status sub-claim) "active")
     false))
+
+(define-read-only (get-lease (claim-id uint))
+  (map-get? claim-leases { claim-id: claim-id }))
 
 (define-public (register-claim 
   (gps-latitude int) 
@@ -424,3 +440,42 @@
       { sub-claim-id: sub-claim-id })
     (var-set sub-claim-counter sub-claim-id)
     (ok sub-claim-id)))
+
+(define-public (create-lease (claim-id uint) (lessee principal) (duration-blocks uint) (rent-per-block uint))
+  (let ((claim (unwrap! (get-claim claim-id) ERR-NOT-FOUND)))
+    (asserts! (is-eq tx-sender (get owner claim)) ERR-UNAUTHORIZED)
+    (asserts! (is-claim-active claim-id) ERR-CLAIM-INACTIVE)
+    (asserts! (> duration-blocks u0) ERR-INVALID-DURATION)
+    (asserts! (> rent-per-block u0) ERR-INVALID-RENT)
+    (asserts! (is-none (get-lease claim-id)) ERR-ALREADY-EXISTS)
+    (map-set claim-leases
+      { claim-id: claim-id }
+      {
+        lessee: lessee,
+        start-block: stacks-block-height,
+        end-block: (+ stacks-block-height duration-blocks),
+        rent-per-block: rent-per-block,
+        last-payment-block: stacks-block-height
+      })
+    (ok true)))
+
+(define-public (pay-lease-rent (claim-id uint))
+  (let ((lease (unwrap! (get-lease claim-id) ERR-NOT-FOUND))
+        (claim (unwrap! (get-claim claim-id) ERR-NOT-FOUND))
+        (blocks-due (- stacks-block-height (get last-payment-block lease)))
+        (rent-due (* blocks-due (get rent-per-block lease))))
+    (asserts! (is-eq tx-sender (get lessee lease)) ERR-UNAUTHORIZED)
+    (asserts! (<= stacks-block-height (get end-block lease)) ERR-CLAIM-INACTIVE)
+    (asserts! (> rent-due u0) ERR-NO-RENT-DUE)
+    (try! (stx-transfer? rent-due tx-sender (get owner claim)))
+    (map-set claim-leases
+      { claim-id: claim-id }
+      (merge lease { last-payment-block: stacks-block-height }))
+    (ok rent-due)))
+
+(define-public (terminate-lease (claim-id uint))
+  (let ((lease (unwrap! (get-lease claim-id) ERR-NOT-FOUND))
+        (claim (unwrap! (get-claim claim-id) ERR-NOT-FOUND)))
+    (asserts! (or (is-eq tx-sender (get owner claim)) (is-eq tx-sender (get lessee lease))) ERR-UNAUTHORIZED)
+    (map-delete claim-leases { claim-id: claim-id })
+    (ok true)))

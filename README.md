@@ -1,4 +1,4 @@
-> 🚀 Blockchain-based solution for transparent and secure mining rights management
+>  Blockchain-based solution for transparent and secure mining rights management
 
 ## 🌟 Overview
 
@@ -12,6 +12,7 @@ MineRight is a revolutionary decentralized platform built on Stacks blockchain t
 - 🤝 **Multi-Signature Licensing**: Government and local body approval requirements
 - 🔄 **Claim Trading**: Transfer mining rights between parties securely
 - ⏰ **Time-Based Claims**: Automatic expiry and extension mechanisms
+- 🏠 **Claim Leasing**: Temporary rental system for flexible claim utilization
 
 ## 🏗️ Contract Functions
 
@@ -49,6 +50,14 @@ Automated royalty deposit and withdrawal system.
 (revoke-claim claim-id)
 ```
 Transfer ownership, extend validity, or revoke claims.
+
+### 🏠 Claim Leasing
+```clarity
+(create-lease claim-id lessee duration-blocks rent-per-block)
+(pay-lease-rent claim-id)
+(terminate-lease claim-id)
+```
+Lease mining claims to other users with automated rent collection.
 
 ## 📖 Usage Instructions
 
@@ -98,6 +107,7 @@ Transfer ownership, extend validity, or revoke claims.
 - 🌱 **Environmental Groups**: Monitor and score compliance
 - 🏘️ **Local Communities**: Participate in governance decisions
 - 👥 **Investors**: Trade mining rights as tokenized assets
+- 👤 **Claim Owners**: Lease claims for additional revenue streams
 
 ## 🔧 Technical Specifications
 
@@ -107,6 +117,8 @@ Transfer ownership, extend validity, or revoke claims.
 - **Royalty Precision**: Basis points (1/1000th percent)
 - **Compliance Scale**: 0-100 scoring system
 - **Default Claim Duration**: ~1 year (52,560 blocks)
+- **Lease Duration**: Block-based timing system
+- **Rent Precision**: Per-block STX payments
 
 ## 🛡️ Security Features
 
@@ -128,6 +140,9 @@ Transfer ownership, extend validity, or revoke claims.
 | u6   | Invalid compliance score |
 | u7   | Claim not active |
 | u8   | Invalid royalty rate |
+| u15  | Invalid lease duration |
+| u16  | Invalid rent rate |
+| u17  | No rent due |
 
 ## 🤝 Contributing
 
