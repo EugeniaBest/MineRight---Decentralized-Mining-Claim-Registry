@@ -13,6 +13,7 @@ MineRight is a revolutionary decentralized platform built on Stacks blockchain t
 - 🔄 **Claim Trading**: Transfer mining rights between parties securely
 - ⏰ **Time-Based Claims**: Automatic expiry and extension mechanisms
 - 🏠 **Claim Leasing**: Temporary rental system for flexible claim utilization
+- 🛒 **Decentralized Marketplace**: Peer-to-peer trading platform for mining claims
 
 ## 🏗️ Contract Functions
 
@@ -59,7 +60,15 @@ Transfer ownership, extend validity, or revoke claims.
 ```
 Lease mining claims to other users with automated rent collection.
 
-## 📖 Usage Instructions
+### 🛒 Decentralized Marketplace
+```clarity
+(list-claim-for-sale claim-id price)
+(buy-claim listing-id)
+(cancel-listing listing-id)
+```
+Peer-to-peer marketplace for buying and selling mining claims with instant settlement.
+
+## � Usage Instructions
 
 ### 🚀 Getting Started
 
@@ -108,6 +117,7 @@ Lease mining claims to other users with automated rent collection.
 - 🏘️ **Local Communities**: Participate in governance decisions
 - 👥 **Investors**: Trade mining rights as tokenized assets
 - 👤 **Claim Owners**: Lease claims for additional revenue streams
+- 🛒 **Traders**: Buy and sell mining claims on the decentralized marketplace
 
 ## 🔧 Technical Specifications
 
@@ -119,6 +129,7 @@ Lease mining claims to other users with automated rent collection.
 - **Default Claim Duration**: ~1 year (52,560 blocks)
 - **Lease Duration**: Block-based timing system
 - **Rent Precision**: Per-block STX payments
+- **Marketplace Settlement**: Instant STX transfers for claim purchases
 
 ## 🛡️ Security Features
 
@@ -143,6 +154,7 @@ Lease mining claims to other users with automated rent collection.
 | u15  | Invalid lease duration |
 | u16  | Invalid rent rate |
 | u17  | No rent due |
+| u18  | Invalid marketplace price |
 
 ## 🤝 Contributing
 

@@ -13,11 +13,13 @@
 (define-constant ERR-INVALID-DURATION (err u15))
 (define-constant ERR-INVALID-RENT (err u16))
 (define-constant ERR-NO-RENT-DUE (err u17))
+(define-constant ERR-INVALID-PRICE (err u18))
 
 (define-data-var claim-counter uint u0)
 (define-data-var required-approvals uint u2)
 (define-data-var dispute-counter uint u0)
 (define-data-var sub-claim-counter uint u0)
+(define-data-var marketplace-counter uint u0)
 
 (define-map mining-claims
   { claim-id: uint }
@@ -109,6 +111,16 @@
     last-payment-block: uint
   })
 
+(define-map marketplace-listings
+  { listing-id: uint }
+  {
+    claim-id: uint,
+    seller: principal,
+    price: uint,
+    listed-at: uint,
+    status: (string-ascii 20)
+  })
+
 (define-read-only (get-claim (claim-id uint))
   (map-get? mining-claims { claim-id: claim-id }))
 
@@ -168,6 +180,9 @@
 
 (define-read-only (get-lease (claim-id uint))
   (map-get? claim-leases { claim-id: claim-id }))
+
+(define-read-only (get-marketplace-listing (listing-id uint))
+  (map-get? marketplace-listings { listing-id: listing-id }))
 
 (define-public (register-claim 
   (gps-latitude int) 
@@ -478,4 +493,46 @@
         (claim (unwrap! (get-claim claim-id) ERR-NOT-FOUND)))
     (asserts! (or (is-eq tx-sender (get owner claim)) (is-eq tx-sender (get lessee lease))) ERR-UNAUTHORIZED)
     (map-delete claim-leases { claim-id: claim-id })
+    (ok true)))
+
+(define-public (list-claim-for-sale (claim-id uint) (price uint))
+  (let ((claim (unwrap! (get-claim claim-id) ERR-NOT-FOUND))
+        (listing-id (+ (var-get marketplace-counter) u1)))
+    (asserts! (is-eq tx-sender (get owner claim)) ERR-UNAUTHORIZED)
+    (asserts! (is-claim-active claim-id) ERR-CLAIM-INACTIVE)
+    (asserts! (> price u0) ERR-INVALID-PRICE)
+    (map-set marketplace-listings
+      { listing-id: listing-id }
+      {
+        claim-id: claim-id,
+        seller: tx-sender,
+        price: price,
+        listed-at: stacks-block-height,
+        status: "active"
+      })
+    (var-set marketplace-counter listing-id)
+    (ok listing-id)))
+
+(define-public (buy-claim (listing-id uint))
+  (let ((listing (unwrap! (get-marketplace-listing listing-id) ERR-NOT-FOUND))
+        (claim (unwrap! (get-claim (get claim-id listing)) ERR-NOT-FOUND)))
+    (asserts! (is-eq (get status listing) "active") ERR-NOT-FOUND)
+    (asserts! (is-claim-active (get claim-id listing)) ERR-CLAIM-INACTIVE)
+    (asserts! (not (is-eq tx-sender (get seller listing))) ERR-UNAUTHORIZED)
+    (try! (stx-transfer? (get price listing) tx-sender (get seller listing)))
+    (map-set mining-claims
+      { claim-id: (get claim-id listing) }
+      (merge claim { owner: tx-sender }))
+    (map-set marketplace-listings
+      { listing-id: listing-id }
+      (merge listing { status: "sold" }))
+    (ok true)))
+
+(define-public (cancel-listing (listing-id uint))
+  (let ((listing (unwrap! (get-marketplace-listing listing-id) ERR-NOT-FOUND)))
+    (asserts! (is-eq tx-sender (get seller listing)) ERR-UNAUTHORIZED)
+    (asserts! (is-eq (get status listing) "active") ERR-NOT-FOUND)
+    (map-set marketplace-listings
+      { listing-id: listing-id }
+      (merge listing { status: "cancelled" }))
     (ok true)))
