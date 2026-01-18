@@ -121,6 +121,10 @@
     status: (string-ascii 20)
   })
 
+(define-map claim-heirs
+  { claim-id: uint }
+  { heir: principal, activation-block: uint })
+
 (define-read-only (get-claim (claim-id uint))
   (map-get? mining-claims { claim-id: claim-id }))
 
@@ -180,9 +184,13 @@
 
 (define-read-only (get-lease (claim-id uint))
   (map-get? claim-leases { claim-id: claim-id }))
-
 (define-read-only (get-marketplace-listing (listing-id uint))
+
   (map-get? marketplace-listings { listing-id: listing-id }))
+
+(define-read-only (get-claim-heir (claim-id uint))
+
+  (map-get? claim-heirs { claim-id: claim-id }))
 
 (define-public (register-claim 
   (gps-latitude int) 
@@ -535,4 +543,25 @@
     (map-set marketplace-listings
       { listing-id: listing-id }
       (merge listing { status: "cancelled" }))
+    (ok true)))
+
+(define-public (set-claim-heir (claim-id uint) (heir principal) (activation-delay uint))
+  (let ((claim (unwrap! (get-claim claim-id) ERR-NOT-FOUND)))
+    (asserts! (is-eq tx-sender (get owner claim)) ERR-UNAUTHORIZED)
+    (asserts! (> activation-delay u0) ERR-INVALID-DURATION)
+    (map-set claim-heirs
+      { claim-id: claim-id }
+      { heir: heir, activation-block: (+ stacks-block-height activation-delay) })
+    (ok true)))
+
+(define-public (activate-claim-heir (claim-id uint))
+  (let ((heir-data (unwrap! (get-claim-heir claim-id) ERR-NOT-FOUND))
+        (claim (unwrap! (get-claim claim-id) ERR-NOT-FOUND)))
+    (asserts! (is-eq tx-sender (get heir heir-data)) ERR-UNAUTHORIZED)
+    (asserts! (>= stacks-block-height (get activation-block heir-data)) ERR-INVALID-DURATION)
+    (asserts! (is-claim-active claim-id) ERR-CLAIM-INACTIVE)
+    (map-set mining-claims
+      { claim-id: claim-id }
+      (merge claim { owner: tx-sender }))
+    (map-delete claim-heirs { claim-id: claim-id })
     (ok true)))

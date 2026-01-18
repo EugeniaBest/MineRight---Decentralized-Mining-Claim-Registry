@@ -14,6 +14,7 @@ MineRight is a revolutionary decentralized platform built on Stacks blockchain t
 - ⏰ **Time-Based Claims**: Automatic expiry and extension mechanisms
 - 🏠 **Claim Leasing**: Temporary rental system for flexible claim utilization
 - 🛒 **Decentralized Marketplace**: Peer-to-peer trading platform for mining claims
+- 👑 **Claim Inheritance**: Designate successors for seamless claim transfer
 
 ## 🏗️ Contract Functions
 
